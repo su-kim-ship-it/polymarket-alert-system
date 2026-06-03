@@ -26,7 +26,11 @@ REVERSAL_THRESHOLD = 0.05
 
 
 def send_slack_message(text):
-    response = requests.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=20)
+    response = requests.post(
+        SLACK_WEBHOOK_URL,
+        json={"text": text},
+        timeout=20
+    )
     response.raise_for_status()
 
 
@@ -77,7 +81,7 @@ def get_yes_token_id(market):
         if str(outcome).lower() == "yes" and i < len(token_ids):
             return token_ids[i]
 
-    return token_ids[0] if token_ids else None
+    return token_ids[0]
 
 
 def fetch_price_history(token_id):
@@ -94,10 +98,12 @@ def fetch_price_history(token_id):
 def nearest_price(history, target_timestamp):
     if not history:
         return None
-    return min(
+
+    closest = min(
         history,
         key=lambda x: abs(int(x.get("t", 0)) - target_timestamp)
-    ).get("p")
+    )
+    return closest.get("p")
 
 
 def detect_reversal(history):
@@ -107,7 +113,7 @@ def detect_reversal(history):
     now_ts = int(datetime.now(timezone.utc).timestamp())
 
     p_now = safe_float(history[-1].get("p"))
-    p_1h = safe_float(nearest_price(history, now_ts - 1 * 3600))
+    p_1h = safe_float(nearest_price(history, now_ts - 3600))
     p_3h = safe_float(nearest_price(history, now_ts - 3 * 3600))
     p_6h = safe_float(nearest_price(history, now_ts - 6 * 3600))
 
@@ -116,7 +122,6 @@ def detect_reversal(history):
 
     was_uptrend = p_6h < p_3h < p_1h
     was_downtrend = p_6h > p_3h > p_1h
-
     recent_change = p_now - p_1h
 
     if was_uptrend and recent_change <= -REVERSAL_THRESHOLD:
@@ -203,9 +208,8 @@ _This is an automated MVP alert. Please verify market liquidity and news context
 
 
 def build_daily_summary(checked, alerts_sent, top_movers):
-    movers_text = ""
-
     if top_movers:
+        movers_text = ""
         for i, mover in enumerate(top_movers[:5], 1):
             movers_text += (
                 f"{i}. {mover['question']}\n"
@@ -259,6 +263,7 @@ def main():
                 continue
 
             token_id = get_yes_token_id(market)
+
             if not token_id:
                 continue
 
@@ -266,11 +271,15 @@ def main():
 
             try:
                 history = fetch_price_history(token_id)
+
+                if not history:
+                    continue
+
                 reversal = detect_reversal(history)
 
                 now_ts = int(datetime.now(timezone.utc).timestamp())
-                p_now = safe_float(history[-1].get("p")) if history else 0.0
-                p_6h = safe_float(nearest_price(history, now_ts - 6 * 3600)) if history else 0.0
+                p_now = safe_float(history[-1].get("p"))
+                p_6h = safe_float(nearest_price(history, now_ts - 6 * 3600))
 
                 if p_now and p_6h:
                     top_movers.append({
@@ -280,22 +289,21 @@ def main():
                         "change_6h": p_now - p_6h
                     })
 
+                if reversal:
+                    category = category_for_text(text)
+                    alert = build_reversal_alert(
+                        event_title,
+                        question,
+                        reversal,
+                        category,
+                        liquidity,
+                        volume_24h
+                    )
+                    send_slack_message(alert)
+                    alerts_sent += 1
+
             except Exception as e:
                 print(f"Error checking market: {question} | {e}")
-                continue
-
-            if reversal:
-                category = category_for_text(text)
-                alert = build_reversal_alert(
-                    event_title=event_title,
-                    market_question=question,
-                    reversal=reversal,
-                    category=category,
-                    liquidity=liquidity,
-                    volume_24h=volume_24h,
-                )
-                send_slack_message(alert)
-                alerts_sent += 1
 
         if checked >= MAX_MARKETS_TO_CHECK:
             break
@@ -309,11 +317,9 @@ def main():
     print(f"Checked markets: {checked}")
     print(f"Alerts sent: {alerts_sent}")
 
-    # Send Daily Summary once per day at 9:00 JST.
-    # GitHub Actions runs on UTC, so 00:00 UTC = 09:00 JST.
     current_utc_hour = datetime.now(timezone.utc).hour
 
-    if True:
+    if current_utc_hour == 0:
         summary = build_daily_summary(checked, alerts_sent, top_movers)
         send_slack_message(summary)
 
