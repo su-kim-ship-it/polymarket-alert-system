@@ -277,10 +277,4 @@ def main():
 
 
 if __name__ == "__main__":
-    send_slack_message("""
-🚨 TEST REVERSAL SIGNAL
-
-This is a test alert from the Prediction Market Alert System.
-
-If you can see this message, Slack integration is working correctly.
-""")
+    main()
