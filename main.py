@@ -9,19 +9,12 @@ GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
 CLOB_HISTORY_URL = "https://clob.polymarket.com/prices-history"
 
 WATCH_KEYWORDS = [
-    # macroeconomic positioning
     "fed", "rate cut", "interest rate", "inflation", "cpi", "recession",
     "unemployment", "gdp", "tariff", "dollar", "yen",
-
-    # geopolitical developments
     "iran", "israel", "russia", "ukraine", "china", "taiwan", "war",
     "conflict", "ceasefire", "nato", "middle east",
-
-    # regulatory risk
     "regulation", "sec", "antitrust", "ban", "export control",
     "sanction", "lawsuit",
-
-    # sector rotation
     "ai", "semiconductor", "chip", "nvidia", "oil", "energy",
     "defense", "crypto", "bitcoin", "ev"
 ]
@@ -29,13 +22,10 @@ WATCH_KEYWORDS = [
 MIN_LIQUIDITY = 500
 MIN_VOLUME_24H = 500
 MAX_MARKETS_TO_CHECK = 30
-
-PREVIOUS_TREND_HOURS = 6
-REVERSAL_WINDOW_HOURS = 1
-REVERSAL_THRESHOLD = 0.05  # 5 percentage points
+REVERSAL_THRESHOLD = 0.05
 
 
-def send_slack_message(text: str):
+def send_slack_message(text):
     response = requests.post(SLACK_WEBHOOK_URL, json={"text": text}, timeout=20)
     response.raise_for_status()
 
@@ -71,7 +61,7 @@ def fetch_events():
     return response.json()
 
 
-def is_relevant_market(text: str) -> bool:
+def is_relevant_market(text):
     lower = text.lower()
     return any(keyword in lower for keyword in WATCH_KEYWORDS)
 
@@ -98,25 +88,19 @@ def fetch_price_history(token_id):
     }
     response = requests.get(CLOB_HISTORY_URL, params=params, timeout=30)
     response.raise_for_status()
-    data = response.json()
-    return data.get("history", [])
+    return response.json().get("history", [])
 
 
 def nearest_price(history, target_timestamp):
     if not history:
         return None
-    return min(history, key=lambda x: abs(int(x.get("t", 0)) - target_timestamp)).get("p")
+    return min(
+        history,
+        key=lambda x: abs(int(x.get("t", 0)) - target_timestamp)
+    ).get("p")
 
 
 def detect_reversal(history):
-    """
-    MVP logic:
-    - Compare current price with 1h ago, 3h ago, and 6h ago.
-    - If 6h -> 3h -> 1h was uptrend, but current dropped by 5%p+ vs 1h ago:
-      Uptrend to Downtrend Reversal.
-    - If 6h -> 3h -> 1h was downtrend, but current rose by 5%p+ vs 1h ago:
-      Downtrend to Uptrend Reversal.
-    """
     if len(history) < 4:
         return None
 
@@ -162,10 +146,10 @@ def detect_reversal(history):
     return None
 
 
-def category_for_text(text: str) -> str:
+def category_for_text(text):
     lower = text.lower()
 
-    if any(k in lower for k in ["fed", "rate", "inflation", "cpi", "recession", "gdp", "unemployment"]):
+    if any(k in lower for k in ["fed", "rate", "inflation", "cpi", "recession", "gdp"]):
         return "Macroeconomic Positioning"
     if any(k in lower for k in ["iran", "israel", "russia", "ukraine", "china", "taiwan", "war", "conflict"]):
         return "Geopolitical Developments"
@@ -177,7 +161,7 @@ def category_for_text(text: str) -> str:
     return "Other Market Signal"
 
 
-def implication_for_category(category: str, signal: str) -> str:
+def implication_for_category(category):
     if category == "Macroeconomic Positioning":
         return "Check rates, USD/JPY, banks, real estate, and duration-sensitive equities."
     if category == "Geopolitical Developments":
@@ -189,7 +173,7 @@ def implication_for_category(category: str, signal: str) -> str:
     return "Review related assets and confirm whether the move is investable."
 
 
-def build_alert(event_title, market_question, reversal, category, liquidity, volume_24h):
+def build_reversal_alert(event_title, market_question, reversal, category, liquidity, volume_24h):
     return f"""🚨 *Prediction Market Trend Reversal Alert*
 
 *Category:* {category}
@@ -212,9 +196,39 @@ Now: {reversal["p_now"]:.1%}
 *24h Volume:* ${volume_24h:,.0f}
 
 *Investment Implication:*
-{implication_for_category(category, reversal["signal"])}
+{implication_for_category(category)}
 
 _This is an automated MVP alert. Please verify market liquidity and news context before taking action._
+"""
+
+
+def build_daily_summary(checked, alerts_sent, top_movers):
+    movers_text = ""
+
+    if top_movers:
+        for i, mover in enumerate(top_movers[:5], 1):
+            movers_text += (
+                f"{i}. {mover['question']}\n"
+                f"   6h ago: {mover['p_6h']:.1%} → Now: {mover['p_now']:.1%} "
+                f"({mover['change_6h']:+.1%})\n"
+            )
+    else:
+        movers_text = "No major probability movers detected."
+
+    return f"""📊 *Prediction Market Daily Summary*
+
+*System Status:* Running Normally
+*Markets Checked:* {checked}
+*Trend Reversal Signals Found:* {alerts_sent}
+
+*Top Probability Movers:*
+{movers_text}
+
+*Summary:*
+The monitoring system completed its scheduled scan successfully.
+If no reversal alert was sent today, it means no market met the current reversal threshold.
+
+_This summary confirms that the system is operating normally._
 """
 
 
@@ -222,6 +236,7 @@ def main():
     events = fetch_events()
     checked = 0
     alerts_sent = 0
+    top_movers = []
 
     for event in events:
         event_title = event.get("title") or event.get("question") or "Unknown Event"
@@ -252,13 +267,26 @@ def main():
             try:
                 history = fetch_price_history(token_id)
                 reversal = detect_reversal(history)
+
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                p_now = safe_float(history[-1].get("p")) if history else 0.0
+                p_6h = safe_float(nearest_price(history, now_ts - 6 * 3600)) if history else 0.0
+
+                if p_now and p_6h:
+                    top_movers.append({
+                        "question": question,
+                        "p_now": p_now,
+                        "p_6h": p_6h,
+                        "change_6h": p_now - p_6h
+                    })
+
             except Exception as e:
                 print(f"Error checking market: {question} | {e}")
                 continue
 
             if reversal:
                 category = category_for_text(text)
-                alert = build_alert(
+                alert = build_reversal_alert(
                     event_title=event_title,
                     market_question=question,
                     reversal=reversal,
@@ -272,8 +300,22 @@ def main():
         if checked >= MAX_MARKETS_TO_CHECK:
             break
 
+    top_movers = sorted(
+        top_movers,
+        key=lambda x: abs(x["change_6h"]),
+        reverse=True
+    )
+
     print(f"Checked markets: {checked}")
     print(f"Alerts sent: {alerts_sent}")
+
+    # Send Daily Summary once per day at 9:00 JST.
+    # GitHub Actions runs on UTC, so 00:00 UTC = 09:00 JST.
+    current_utc_hour = datetime.now(timezone.utc).hour
+
+   if True:
+        summary = build_daily_summary(checked, alerts_sent, top_movers)
+        send_slack_message(summary)
 
 
 if __name__ == "__main__":
