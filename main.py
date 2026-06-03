@@ -313,7 +313,7 @@ def main():
     # GitHub Actions runs on UTC, so 00:00 UTC = 09:00 JST.
     current_utc_hour = datetime.now(timezone.utc).hour
 
-   if True:
+    if True:
         summary = build_daily_summary(checked, alerts_sent, top_movers)
         send_slack_message(summary)
 
