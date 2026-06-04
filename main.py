@@ -319,9 +319,8 @@ def main():
 
     current_utc_hour = datetime.now(timezone.utc).hour
 
-    if current_utc_hour == 0:
-        summary = build_daily_summary(checked, alerts_sent, top_movers)
-        send_slack_message(summary)
+    summary = build_daily_summary(checked, alerts_sent, top_movers)
+send_slack_message(summary)
 
 
 if __name__ == "__main__":
