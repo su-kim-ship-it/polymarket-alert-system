@@ -317,10 +317,12 @@ def main():
     print(f"Checked markets: {checked}")
     print(f"Alerts sent: {alerts_sent}")
 
-    current_utc_hour = datetime.now(timezone.utc).hour
-
     summary = build_daily_summary(checked, alerts_sent, top_movers)
-send_slack_message(summary)
+    send_slack_message(summary)
+
+
+if __name__ == "__main__":
+    main() 
 
 
 if __name__ == "__main__":
