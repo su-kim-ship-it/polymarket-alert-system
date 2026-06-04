@@ -317,10 +317,16 @@ def main():
     print(f"Checked markets: {checked}")
     print(f"Alerts sent: {alerts_sent}")
 
-    current_utc_hour = datetime.now(timezone.utc).hour
+    force_daily_summary = (
+        os.environ.get("FORCE_DAILY_SUMMARY") == "true"
+    )
 
-    if current_utc_hour == 0:
-        summary = build_daily_summary(checked, alerts_sent, top_movers)
+    if force_daily_summary:
+        summary = build_daily_summary(
+            checked,
+            alerts_sent,
+            top_movers
+        )
         send_slack_message(summary)
 
 
