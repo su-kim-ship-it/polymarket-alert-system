@@ -56,12 +56,22 @@ def fetch_events():
     params = {
         "active": "true",
         "closed": "false",
-        "order": "volume",
-        "ascending": "false",
         "limit": 100,
     }
-    response = requests.get(GAMMA_EVENTS_URL, params=params, timeout=30)
+
+    response = requests.get(
+        GAMMA_EVENTS_URL,
+        params=params,
+        timeout=30
+    )
+
+    print("Gamma API status:", response.status_code)
+
+    if response.status_code != 200:
+        print(response.text)
+
     response.raise_for_status()
+
     return response.json()
 
 
