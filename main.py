@@ -56,7 +56,7 @@ def fetch_events():
     params = {
         "active": "true",
         "closed": "false",
-        "order": "volume_24hr",
+        "order": "volume",
         "ascending": "false",
         "limit": 100,
     }
